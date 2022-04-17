@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -82,14 +83,16 @@ type Alertmanager interface {
 
 // Bot runs the alertmanager telegram.
 type Bot struct {
-	addr         string
-	admins       []int // must be kept sorted
-	alertmanager Alertmanager
-	templates    *template.Template
-	chats        BotChatStore
-	logger       log.Logger
-	revision     string
-	startTime    time.Time
+	addr            string
+	admins          []int // must be kept sorted
+	allowedChannels []int64
+	alertmanager    Alertmanager
+	templates       *template.Template
+	chats           BotChatStore
+	logger          log.Logger
+	revision        string
+	startTime       time.Time
+	welcomeImage    string
 
 	telegram Telebot
 
@@ -100,7 +103,7 @@ type Bot struct {
 type BotOption func(b *Bot) error
 
 // NewBot creates a Bot with the UserStore and telegram telegram.
-func NewBot(chats BotChatStore, token string, admin int, opts ...BotOption) (*Bot, error) {
+func NewBot(chats BotChatStore, token string, admin []int, allowedChannel []int64, welcomeImage string, opts ...BotOption) (*Bot, error) {
 	poller := &telebot.LongPoller{
 		Timeout: 10 * time.Second,
 	}
@@ -113,17 +116,24 @@ func NewBot(chats BotChatStore, token string, admin int, opts ...BotOption) (*Bo
 		return nil, err
 	}
 
-	return NewBotWithTelegram(chats, bot, admin, opts...)
+	return NewBotWithTelegram(chats, bot, admin, allowedChannel, welcomeImage, opts...)
 }
 
-func NewBotWithTelegram(chats BotChatStore, bot Telebot, admin int, opts ...BotOption) (*Bot, error) {
+func NewBotWithTelegram(chats BotChatStore, bot Telebot, admin []int, allowedChannel []int64, welcomeImage string, opts ...BotOption) (*Bot, error) {
+	level.Debug(log.NewJSONLogger(os.Stdout)).Log(
+		"msg", "building bot client",
+		"admins", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(admin)), ","), "[]"),
+		"channels", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(allowedChannel)), ","), "[]"),
+	)
 	b := &Bot{
-		logger:        log.NewNopLogger(),
-		telegram:      bot,
-		chats:         chats,
-		addr:          "127.0.0.1:8080",
-		admins:        []int{admin},
-		commandEvents: func(command string) {},
+		logger:          log.NewNopLogger(),
+		telegram:        bot,
+		chats:           chats,
+		addr:            "127.0.0.1:8080",
+		admins:          admin,
+		allowedChannels: allowedChannel,
+		welcomeImage:    welcomeImage,
+		commandEvents:   func(command string) {},
 	}
 
 	for _, opt := range opts {
@@ -228,6 +238,16 @@ func (b *Bot) isAdminID(id int) bool {
 	return i < len(b.admins) && b.admins[i] == id
 }
 
+// isAllowedChannel returns whether chat id is one of the configured channel IDs.
+func (b *Bot) isAllowedChannel(id int64) bool {
+	for _, value := range b.allowedChannels {
+		if -value == id {
+			return true
+		}
+	}
+	return false
+}
+
 // Run the telegram and listen to messages send to the telegram.
 func (b *Bot) Run(ctx context.Context, webhooks <-chan alertmanager.TelegramWebhook) error {
 	b.telegram.Handle(CommandStart, b.middleware(b.handleStart))
@@ -238,6 +258,7 @@ func (b *Bot) Run(ctx context.Context, webhooks <-chan alertmanager.TelegramWebh
 	b.telegram.Handle(CommandStatus, b.middleware(b.handleStatus))
 	b.telegram.Handle(CommandAlerts, b.middleware(b.handleAlerts))
 	b.telegram.Handle(CommandSilences, b.middleware(b.handleSilences))
+	b.telegram.Handle(telebot.OnChannelPost, b.middleware(b.handleStart))
 
 	var gr run.Group
 	{
@@ -299,11 +320,50 @@ func (b *Bot) sendWebhook(ctx context.Context, webhooks <-chan alertmanager.Tele
 	}
 }
 
+func (b *Bot) handleChannelMessage(message *telebot.Message) error {
+	level.Debug(b.logger).Log("msg", "message from channel", "chat_id", message.Chat.ID, "sender_id", message.Sender.ID, "msg", message.Text)
+	return nil
+}
+
 func (b *Bot) middleware(next func(*telebot.Message) error) func(*telebot.Message) {
 	return func(m *telebot.Message) {
 		if m.IsService() {
 			return
 		}
+
+		level.Info(b.logger).Log("msg", "received message", "chat_id", m.Chat.ID, "message", m.Text, "is_channel", m.FromChannel())
+
+		if m.FromChannel() {
+			level.Debug(b.logger).Log("msg", "allowed channels", "channels", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(b.allowedChannels)), ","), "[]"))
+			if !b.isAllowedChannel(m.Chat.ID) {
+				level.Error(b.logger).Log("msg", "dropping message from forbidden channel",
+					"chat_id", m.Chat.ID,
+				)
+				return
+			}
+
+			if len(m.Text) == 0 {
+				level.Warn(b.logger).Log("msg", "received empty message from channel, nothing to do")
+				return
+			}
+			level.Info(b.logger).Log("msg", "receive from channel", "cmd", m.Text)
+			// only supported command in channel mode is /start
+			if m.Text != CommandStart {
+				level.Debug(b.logger).Log("msg", "invalid command received", "cmd", m.Text)
+				return
+			}
+			// build fake sender with admin id
+			// i am going to hell for this
+			m.Sender = &telebot.User{
+				ID:           b.admins[0],
+				Username:     "somebody",
+				FirstName:    "first",
+				LastName:     "last",
+				LanguageCode: "en",
+				IsBot:        false,
+			}
+		}
+		level.Debug(b.logger).Log("msg", "validate permissions to run command")
 		if !b.isAdminID(m.Sender.ID) && m.Text != CommandID {
 			level.Info(b.logger).Log(
 				"msg", "dropping message from forbidden sender",
@@ -312,8 +372,8 @@ func (b *Bot) middleware(next func(*telebot.Message) error) func(*telebot.Messag
 			)
 			return
 		}
-
 		command := strings.Split(m.Text, " ")[0]
+		level.Debug(b.logger).Log("msg", "got command", "cmd", command)
 		b.commandEvents(command)
 
 		level.Debug(b.logger).Log("msg", "message received", "text", m.Text)
@@ -324,6 +384,7 @@ func (b *Bot) middleware(next func(*telebot.Message) error) func(*telebot.Messag
 }
 
 func (b *Bot) handleStart(message *telebot.Message) error {
+	level.Info(b.logger).Log("msg", "handle start", "sender_id", message.Sender.ID, "chat_id", message.Chat.ID, "channel", message.FromChannel())
 	if err := b.chats.Add(message.Chat); err != nil {
 		level.Warn(b.logger).Log("msg", "failed to add chat to chat store", "err", err)
 		_, err = b.telegram.Send(message.Chat, "I can't add this chat to the subscribers list.")
@@ -337,15 +398,11 @@ func (b *Bot) handleStart(message *telebot.Message) error {
 		"chat_id", message.Chat.ID,
 	)
 
-	if message.Chat.Type == telebot.ChatPrivate {
-		if len(message.Sender.FirstName) > 0 {
-			_, err := b.telegram.Send(message.Chat, fmt.Sprintf(responseStartPrivate, message.Sender.FirstName))
-			return err
-		} else {
-			_, err := b.telegram.Send(message.Chat, responseStartPrivateAnonymous)
-			return err
-		}
-
+	if len(b.welcomeImage) > 0 {
+		level.Debug(b.logger).Log("msg", "sending greeting image", "image", b.welcomeImage)
+		p := &telebot.Photo{File: telebot.FromDisk(b.welcomeImage)}
+		_, err := b.telegram.Send(message.Chat, p)
+		return err
 	} else {
 		_, err := b.telegram.Send(message.Chat, responseStartGroup)
 		return err

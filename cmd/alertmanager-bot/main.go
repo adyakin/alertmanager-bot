@@ -57,7 +57,7 @@ var cli struct {
 	LogJSON         bool     `name:"log.json" default:"false" help:"Tell the application to log json and not key value pairs"`
 	LogLevel        string   `name:"log.level" default:"info" enum:"error,warn,info,debug" help:"The log level to use for filtering logs"`
 	TemplatePaths   []string `name:"template.paths" default:"/templates/default.tmpl" help:"The paths to the template"`
-
+	WelcomeImage    string   `name:"greeting" help:"Path to welcome image"`
 	cliTelegram
 
 	Store       string `required:"true" name:"store" enum:"bolt,consul,etcd" help:"The store to use"`
@@ -85,8 +85,9 @@ type cliEtcd struct {
 }
 
 type cliTelegram struct {
-	Admins []int  `required:"true" name:"telegram.admin" help:"The ID of the initial Telegram Admin"`
-	Token  string `required:"true" name:"telegram.token" env:"TELEGRAM_TOKEN" help:"The token used to connect with Telegram"`
+	Admins          []int   `required:"true" name:"telegram.admin" help:"The ID of the initial Telegram Admin"`
+	Token           string  `required:"true" name:"telegram.token" env:"TELEGRAM_TOKEN" help:"The token used to connect with Telegram"`
+	AllowedChannels []int64 `required:"false" name:"telegram.channels" default:"1" help:"ID of channels"`
 }
 
 func main() {
@@ -213,8 +214,12 @@ func main() {
 			os.Exit(1)
 		}
 
+		level.Info(logger).Log("msg", "Bot admins", "admins", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(cli.cliTelegram.Admins)), ","), "[]"))
+
 		bot, err := telegram.NewBot(
-			chats, cli.cliTelegram.Token, cli.cliTelegram.Admins[0],
+			chats, cli.cliTelegram.Token, cli.cliTelegram.Admins,
+			cli.cliTelegram.AllowedChannels,
+			cli.WelcomeImage,
 			telegram.WithLogger(tlogger),
 			telegram.WithCommandEvent(commandCount),
 			telegram.WithAddr(cli.ListenAddr),
@@ -237,6 +242,11 @@ func main() {
 				"goVersion", GoVersion,
 			)
 
+			level.Info(tlogger).Log(
+				"msg", "initial settins",
+				"admins", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(cli.cliTelegram.Admins)), ","), "[]"),
+				"channels", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(cli.cliTelegram.AllowedChannels)), ","), "[]"),
+			)
 			// Runs the bot itself communicating with Telegram
 			return bot.Run(ctx, webhooks)
 		}, func(err error) {

@@ -37,6 +37,7 @@ func HandleTelegramWebhook(logger log.Logger, counter prometheus.Counter, webhoo
 			_, _ = w.Write([]byte(`{"error":"unable to parse chat ID to int64"}`))
 			return
 		}
+		level.Info(logger).Log("msg", "Sending message", "chatId", chatID)
 
 		var message webhook.Message
 
