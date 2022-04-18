@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    {{- include "alertmanager-tg.labels" . | nindent 4 }}
+  name: {{ include "alertmanager-tg.fullname" . }}
+spec:
+  podManagementPolicy: OrderedReady
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "alertmanager-tg.selectorLabels" . | nindent 6 }}
+  serviceName: {{ include "alertmanager-tg.fullname" . }}
+  template:
+    metadata:
+      annotations:
+          checksum/config: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "alertmanager-tg.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "alertmanager-tg.serviceAccountName" . }}
+      containers:
+      - args:
+        - --alertmanager.url={{ .Values.bot.alertmanager }}
+        - --log.level={{ .Values.bot.logLevel }}
+        - --store=bolt
+        - --bolt.path=/data/bot.db
+        {{- if .Values.bot.greeting }}
+        - --greeting={{ .Values.bot.greeting }}
+        {{- end }}
+        {{- if .Values.bot.telegramAdmins }}
+          {{- range .Values.bot.telegramAdmins}}
+        - --telegram.admin={{.}}
+          {{- end}}
+        {{- end }}
+        {{- if .Values.bot.channels }}
+          {{- range .Values.bot.channels}}
+        - --telegram.channels={{.}}
+          {{- end}}
+        {{- end }}
+        env:
+        {{- if .Values.proxy.http_proxy }}
+        - name: http_proxy
+          value: "{{ .Values.proxy.http_proxy }}"
+        {{- end }}
+        {{- if .Values.proxy.https_proxy }}
+        - name: https_proxy
+          value: "{{ .Values.proxy.https_proxy }}"
+        {{- end }}
+        {{- if .Values.proxy.no_proxy }}
+        - name: no_proxy
+          value: "{{ .Values.proxy.no_proxy }}"
+        {{- end }}
+        - name: TELEGRAM_TOKEN
+          valueFrom:
+            secretKeyRef:
+              key: token
+              name: {{ include "alertmanager-tg.fullname" . }}
+        image: "{{ .Values.image.repository }}/{{ .Values.image.name }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        name: {{ .Chart.Name }}
+        ports:
+        - containerPort: 8080
+          name: http
+        resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+        volumeMounts:
+        - mountPath: /data
+          name: {{ .Values.bot.pvc.name }}
+      restartPolicy: Always
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+  volumeClaimTemplates:
+  - metadata:
+      name: {{ .Values.bot.pvc.name }}
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: {{ .Values.bot.pvc.size | default "2Gi" }}
+      storageClassName: {{ .Values.bot.pvc.storageClass }}
