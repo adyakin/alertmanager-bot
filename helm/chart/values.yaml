@@ -75,6 +75,13 @@ bot:
   # bot token
   telegramToken: "token"
 
+  # list of telegram allowed channel ids
+  # you can  subscribe bot for this channels
+  # channels:
+  #   - "123456789" # test channel
+  # greeting image, instead of default text
+  # greeting: "/tmp/welcome4.png"
+
   pvc:
     enabled: yes
     storageClass: default
@@ -83,8 +90,8 @@ bot:
 
 proxy:
   enabled: no
-  http_proxy: "proxy"
-  https_proxy: "proxy"
+  http_proxy: ""
+  https_proxy: ""
   no_proxy: "localhost,.svc,.svc.cluster.local"
 
 autoscaling:
