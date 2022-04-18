@@ -7,7 +7,7 @@ require (
 	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/docker/libkv v0.2.1
 	github.com/go-kit/kit v0.10.0
-	github.com/go-openapi/strfmt v0.19.5
+	github.com/go-openapi/strfmt v0.21.2
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.4.3 // indirect
 	github.com/google/uuid v1.2.0 // indirect
@@ -18,8 +18,6 @@ require (
 	github.com/hashicorp/go-multierror v1.1.0 // indirect
 	github.com/hashicorp/go-uuid v1.0.2 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
-	github.com/kr/pretty v0.2.1 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/miekg/dns v1.1.38 // indirect
 	github.com/mitchellh/mapstructure v1.4.1 // indirect
 	github.com/oklog/run v1.1.0
@@ -34,7 +32,6 @@ require (
 	golang.org/x/net v0.0.0-20210220033124-5f55cee0dc0d // indirect
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c // indirect
 	golang.org/x/sys v0.0.0-20210220050731-9a76102bfb43 // indirect
-	golang.org/x/text v0.3.5 // indirect
 	golang.org/x/tools v0.1.0 // indirect
 	google.golang.org/protobuf v1.25.0 // indirect
 	gopkg.in/tucnak/telebot.v2 v2.3.6-0.20210222174923-66cc553e4d2d
